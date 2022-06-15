@@ -1,0 +1,308 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#-------------------------------------------------------------------------------
+# 1.0. Data import
+#-------------------------------------------------------------------------------
+
+```{r}
+library(readr)
+
+df_v1 <- read_csv("Datasets/3_V1_processed.csv", 
+    col_types = cols(id = col_character(), 
+        end_timestamp_previous_ride = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        start_timestamp = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        zip_4 = col_double()))
+
+df_v2 <- read_csv("Datasets/4_V2_processed.csv", 
+    col_types = cols(id = col_character(), 
+        end_timestamp_previous_ride = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        start_timestamp = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        zip_4 = col_double()))
+
+df_v3 <- read_csv("Datasets/5_V3_processed.csv", 
+    col_types = cols(id = col_character(), 
+        end_timestamp_previous_ride = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        start_timestamp = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        zip_4 = col_double()))
+```
+
+#-------------------------------------------------------------------------------
+# 2.0. Survival analysis preparation
+#-------------------------------------------------------------------------------
+
+```{r}
+library(survival)
+library(ranger)
+library(ggplot2)
+library(dplyr)
+library(ggfortify)
+library(skimr)
+library(survminer)
+library(pec) #SelectCox
+```
+
+# Experiment with groupoing of zip codes
+```{r}
+zip_4_wijknaam <- read_csv("External data/Zip_4_Wijknaam_v2.csv", 
+    col_types = cols(...1 = col_skip(), Wijk2021 = col_skip()))
+
+zip_4_wijknaam <- zip_4_wijknaam[-c(which(duplicated(zip_4_wijknaam$PC6))),] 
+```
+
+```{r}
+df_v1 <- left_join(df_v1, zip_4_wijknaam, by = c("zip_6"="PC6"))
+df_v2 <- left_join(df_v2, zip_4_wijknaam, by = c("zip_6"="PC6"))
+df_v3 <- left_join(df_v3, zip_4_wijknaam, by = c("zip_6"="PC6"))
+```
+
+
+#-------------------------------------------------------------------------------
+# 3.0. Cox Proportional Hazards Model
+#-------------------------------------------------------------------------------
+
+```{r}
+options(scipen=999)
+```
+
+```{r}
+df_v1$zip_4 <- as.factor(df_v1$zip_4)
+df_v1$day <- as.factor(df_v1$day)
+df_v1$month <- as.factor(df_v1$month)
+df_v1$hour <- as.factor(df_v1$hour)
+df_v1$hour <- relevel(df_v1$hour, ref = 13) #12:00 as baseline
+
+df_v2$zip_4 <- as.factor(df_v2$zip_4)
+df_v2$day <- as.factor(df_v2$day)
+df_v2$month <- as.factor(df_v2$month)
+df_v2$hour <- as.factor(df_v2$hour)
+df_v2$hour <- relevel(df_v2$hour, ref = 13)
+
+df_v3$zip_4 <- as.factor(df_v3$zip_4)
+df_v3$day <- as.factor(df_v3$day)
+df_v3$month <- as.factor(df_v3$month)
+df_v3$hour <- as.factor(df_v3$hour)
+df_v3$hour <- relevel(df_v3$hour, ref = 13)
+
+df_v3$interval <- as.factor(df_v3$interval)
+```
+
+# Sun = 1, Mon = 2, Tue = 3, Wed = 4, Thu = 5, Fri = 6, Sat = 7
+
+```{r}
+df_v1$period <- "weekday"
+
+for (i in 1:nrow(df_v1)){
+  if (df_v1$day[i] == 1){ df_v1$period[i] <- "weekend"}
+  if (df_v1$day[i] == 7){ df_v1$period[i] <- "weekend"}
+}
+
+df_v3$period <- "weekday"
+
+for (i in 1:nrow(df_v3)){
+  if (df_v3$day[i] == 1){ df_v3$period[i] <- "weekend"}
+  if (df_v3$day[i] == 7){ df_v3$period[i] <- "weekend"}
+}
+```
+
+
+#-------------------
+# a) V1 
+#-------------------
+
+# Backward selection for Cox model
+```{r}
+selectCox(Surv(idle_time_in_hours, event_indicator) ~ 
+                   tram_200+bus_200+metro_200+train_200+
+                   playground_200+kindergarten_200+
+                   college_200+school_200+university_200+
+                   humidity+sunshine+precipitation+temperature+
+                   hour+period+month+
+                   zip_4, data = df_v1, rule = "aic")
+```
+
+# Run best model
+```{r}
+v1_all <- coxph(Surv(idle_time_in_hours, event_indicator) ~ 
+                   tram_200+
+                   playground_200+kindergarten_200+
+                   school_200+
+                   humidity+sunshine+precipitation+temperature+
+                   hour+period+month+
+                   zip_4
+                   ,data = df_v1)
+v1_all$concordance[6] # 0.5901 with period instead of day, #0.5840 with period and wijknaam2021
+```
+
+```{r}
+summary(v1_all)
+```
+
+# Testing for time-varying coefficients
+```{r}
+zph_v1_all <- cox.zph(v1_all)
+zph_v1_all #tram_200, playground_200, kindergarten_200, H+D+M, zip_4 are time-varying
+```
+
+#-------------------
+# c) V3
+#-------------------
+
+# Cox model 3.0 based on previously relevant variables from V1 minus insignificant variables after first iteration (see #)
+```{r}
+v3_all <- coxph(Surv(start2, stop2, event_indicator) ~ 
+                   #tram_200:strata(interval)+
+                   playground_200:strata(interval)+kindergarten_200:strata(interval)+
+                   #school_200+
+                   #humidity+
+                   sunshine+precipitation+#temperature+
+                   hour+period+#month+
+                   zip_4+cluster(id)
+                   ,data = df_v3)
+v3_all$concordance[6] #if dropoff instead of hour => 0.56, 
+                      #if dropoff:strata(interval) instead of hour => 0.57 
+                      #if period instead of day => 0.8383
+                      #if period instead of day and wijknaam2021 instead of zip_4 => 0.8362
+```
+
+```{r}
+summary(v3_all)
+```
+
+# Testing for time-varying coefficients 
+```{r}
+zph_v3_all <- cox.zph(v3_all)
+zph_v3_all #kindergarten_200, H, zip_4
+```
+
+#-------------------------------------------------------------------------------
+# 5.0. Other (irrelevant)
+#-------------------------------------------------------------------------------
+
+```{r}
+zip_4_distr <- df_v1 %>%
+  count(zip_4) %>%
+  group_by(zip_4) %>%          # now required with changes to dplyr::count()
+  mutate(prop = prop.table(n))
+
+# Outliers: (3026, 3027, 3028, 3082, 3083, 3055, 3053) have very large coefficients, which is explained by the low proportion of trips in these areas (1,1,1,1,3)
+```
+
+```{r}
+period_distr <- df_v1 %>%
+  count(period) %>%
+  group_by(period) %>%          # now required with changes to dplyr::count()
+  mutate(prop = prop.table(n))
+
+```
+
+```{r}
+df_v3$prec_dum <- 0
+
+for (i in 1:nrow(df_v3)){
+  if (df_v3$precipitation[i] > 2){
+    df_v3$prec_dum[i] <- 1
+  }
+}
+df_v3$prec_dum <- as.factor(df_v3$prec_dum)
+
+df_v3$sun_dum <- 0
+
+for (i in 1:nrow(df_v3)){
+  if (df_v3$sunshine[i] > 50){
+    df_v3$sun_dum[i] <- 1
+  }
+}
+df_v3$sun_dum <- as.factor(df_v3$sun_dum)
+```
+
+
+
+
+```{r}
+pc6hnr20210801_gwb$PC4 <- substr(pc6hnr20210801_gwb$PC6, 1, 4)
+```
+
+```{r}
+pc6hnr20210801_gwb$check <- NA
+pc6hnr20210801_gwb$PC4 <- as.numeric(pc6hnr20210801_gwb$PC4)
+
+save <- subset(pc6hnr20210801_gwb, PC4 > 3010)
+save <- subset(save, PC4 < 3084)  
+save <- subset(save, select = c(PC6, Wijk2021))
+
+pairs <- save[!duplicated(t(apply(save, 1, sort))),]
+pairs$relevant <- NA
+
+
+for (i in 1:nrow((pairs))){
+  if (as.character(pairs$PC6[i]) %in% unique(as.character(df_v1$zip_6))){
+    pairs$relevant[i] <- "keep"
+  }
+}
+
+pairs <- subset(pairs, relevant == "keep")
+
+check <- left_join(pairs, wijk2021, by = c("Wijk2021" = "wijkcode2021"))
+check <- subset(check, select = c(PC6, Wijk2021, wijknaam2021))
+
+write.csv(check,"Zip_4_Wijknaam_v2.csv", row.names = TRUE)
+```
+
+# playground
+```{r}
+png(file="time_uni.png",
+width=1200, height=800)
+
+op <- par(mar = c(7,8,4,2) + 0.5)
+par(cex.axis=2, cex.lab=3)
+plot(zph_v1_all_exp_time[6], lwd=6, ylim= c(-1.5,1.5), line = 5)
+abline(0,0, col=1, lty=3, lwd=6)
+#abline(h=v1_all_exp_time$coef[70], col=3, lwd=6, lty=2)
+legend("bottomright", legend=c("Reference line for null effect", "Average hazard over time", "Time-varying hazard"), lty=c(3,2,1), col=c(1,3,1), lwd=6, cex=2)
+par(op)
+
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

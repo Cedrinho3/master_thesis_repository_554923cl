@@ -1,0 +1,694 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#-------------------------------------------------------------------------------
+# 1.0. Data import
+#-------------------------------------------------------------------------------
+
+```{r}
+library(readr)
+df <- read_csv("Datasets/3_V1_processed.csv", 
+    col_types = cols(id = col_character(), 
+        end_timestamp_previous_ride = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        start_timestamp = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        zip_4 = col_double()))
+```
+
+#-------------------------------------------------------------------------------
+# 2.0. Desriptive statistics
+#-------------------------------------------------------------------------------
+
+```{r}
+library(dplyr)
+```
+
+
+```{r}
+thresholds <- c(0, 1, 2, 3, 6, 12, 24, 48, 96)
+
+for (i in thresholds){
+  temp <- filter(df, idle_time_in_hours >= i)
+  print(paste("Observations: ", i, length(temp$id)))
+  print(paste("% of observations: ", round(length(temp$id)/length(df$id)*100, 2)))
+  print(paste("Censored observations: ", length(filter(temp, event_indicator == 1)$id)))
+  print(paste("% of censored observations: ", round(length(filter(temp, event_indicator == 1)$id) / length(temp$id)*100,2)))
+}
+```
+
+```{r}
+png("Figures/1_Descriptives/Distribution_Y.png", width = 1200, height = 800)
+par(mar = c(10, 10, 10, 10))
+par(las=1) # turn axis horizontally
+hist(filter(df, idle_time_in_hours <150)$idle_time_in_hours, main = NA, ylab = "", family = "serif", xlab = "", col = "#67D5BC", breaks = 50, cex.axis = 2, cex.lab = 2.5)
+title(xlab = "Survival time [h]", mgp = c(4, 1, 0), cex.lab = 2.5, family = "serif")
+title(ylab = "Frequency of occurance", mgp = c(7, 1, 0), cex.lab = 2.5, family = "serif")
+dev.off()
+```
+
+#-------------------------------------------------------------------------------
+# 3.0. Survival analysis preparation
+#-------------------------------------------------------------------------------
+
+# adding binary variables for weather based on 90th percentile for KM plots only
+```{r}
+tem_quantile_90 <- quantile(df$temperature, 0.9)
+sun_quantile_90 <- quantile(df$sunshine, 0.9)
+pre_quantile_90 <- quantile(df$precipitation, 0.9)
+hum_quantile_90 <- quantile(df$humidity, 0.9)
+df$tem_90 <- NA
+df$sun_90 <- NA
+df$pre_90 <- NA
+df$hum_90 <- NA
+
+for (i in 1:length(df$id)){
+  if (df$temperature[i]<=tem_quantile_90){
+    df$tem_90[i] <- 1
+  } else {
+    df$tem_90[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$sunshine[i]<=sun_quantile_90){
+    df$sun_90[i] <- 1
+  } else {
+    df$sun_90[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$precipitation[i]<=pre_quantile_90){
+    df$pre_90[i] <- 1
+  } else {
+    df$pre_90[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$humidity[i]<=hum_quantile_90){
+    df$hum_90[i] <- 1
+  } else {
+    df$hum_90[i] <- 0
+  }
+}
+
+```
+
+# extract all relevant columns for survival analysis
+```{r}
+df_surv <- df[,c(9:10, 12, 26:37, 43:46)]
+summary(df_surv)
+```
+
+# loading all packages
+```{r}
+library(survival)
+library(ranger)
+library(ggplot2)
+library(dplyr)
+library(ggfortify)
+library(skimr)
+library(survminer)
+```
+
+```{r}
+skim(df_surv)
+```
+
+#-------------------------------------------------------------------------------
+# 3.1. Kaplan Meier Analysis - Day
+#-------------------------------------------------------------------------------
+
+```{r}
+sfit_day = survfit(Surv(idle_time_in_hours, event_indicator)~day, data=df_surv)
+```
+
+```{r}
+km_days <- ggsurvplot(sfit_day,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c("Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"),
+           legend.title="Weekday",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom")
+
+ggsave("Figures/2_KM-Plots/Days.jpg", plot = print(km_days$plot), width = 7, height = 5, dpi = 250)
+```
+
+```{r}
+library(lubridate)
+```
+
+```{r}
+df$startday <- wday(df$start_timestamp)
+df$starthour <- hour(df$start_timestamp)
+```
+
+```{r}
+write.csv(df,"Datasets/3_V1_Heatmap.csv", row.names = FALSE)
+```
+
+```{r}
+count(df, startday==1) #2419 #Sun
+count(df, startday==2) #2016 #Mon
+count(df, startday==3) #2390 #Tue
+count(df, startday==4) #2581 #Wed
+count(df, startday==5) #2192 #Thu
+count(df, startday==6) #2617 #Fri
+count(df, startday==7) #2706 #Sat
+```
+
+# Sun = 1, Mon = 2, Tue = 3, Wed = 4, Thu = 5, Fri = 6, Sat = 7
+
+#-------------------------------------------------------------------------------
+# 3.2. Kaplan Meier Analysis - Month
+#-------------------------------------------------------------------------------
+
+```{r}
+sfit_month = survfit(Surv(idle_time_in_hours, event_indicator)~month, data=df_surv)
+```
+
+```{r}
+km_month <- ggsurvplot(sfit_month,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c("Jan","Feb","Mar","Apr","May","Jun","Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+           legend.title="Day of week",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           xlab = "Survival time (in hours)",
+           break.x.by = 24,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           )
+
+ggsave("Figures/2_KM-Plots/Months.jpg", plot = print(km_month$plot), width = 7, height = 5, dpi = 250)
+```
+
+
+
+
+#-------------------------------------------------------------------------------
+# 3.3. Kaplan Meier Analysis - Hour
+#-------------------------------------------------------------------------------
+
+```{r}
+png(file="Figures/1_Descriptives/Idle_time_by_hour.png",width=1500, height=700)
+
+par(family = "serif")
+par(mar = c(7, 7, 7, 7))
+par(cex.axis = 1.75)
+boxplot(idle_time_in_hours~hour,
+data=df_surv,
+xlab="",
+ylab="",
+whisklty=1,
+medlwd = 1,
+outline = FALSE,
+outpch = 1,
+col="#67D5BC",
+border="616161",
+notch= FALSE,
+ylim = c(0, 100),
+font.size = 14,
+cex.lab = 2,
+las=1)
+title(xlab = "Hour of drop-off", mgp = c(4, 1, 0), cex.lab = 2, family = "serif")
+title(ylab = "Survival time [h]", mgp = c(4, 1, 0), cex.lab = 2, family = "serif")
+
+dev.off()
+```
+
+```{r}
+test <- df %>%
+  group_by(starthour) %>%
+  summarise(Total = n()) %>%
+  mutate(freq=Total/sum(Total))
+```
+
+```{r}
+png("Figures/1_Descriptives/Pickups_by_hour.png", width = 1500, height = 700)
+par(mar = c(10, 10, 10, 10))
+barplot(test$freq, col = "#67D5BC", las=1, ylim = c(0,0.1), names.arg=c("0","1","2","3","4","5","6",
+                    "7","8","9","10","11","12","13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23"), axis.lty=1, family = "serif", cex.axis = 2, cex.lab = 2.5, cex.names=2)
+title(xlab = "Hour of pick-up", mgp = c(4, 1, 0), cex.lab = 2, family = "serif")
+title(ylab = "Relative frequency", mgp = c(6, 1, 0), cex.lab = 2, family = "serif")
+dev.off()
+```
+
+#-------------------------------------------------------------------------------
+# 4.0. Kaplan Meier Analysis - Places
+#-------------------------------------------------------------------------------
+
+# small p -> significant difference
+
+# METRO
+
+```{r}
+sfit_metro = survfit(Surv(idle_time_in_hours, event_indicator)~metro_200, data=df_surv)
+```
+
+```{r}
+km_metro <- ggsurvplot(sfit_metro,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest metro station",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Metro.jpg", plot = print(km_metro$plot), width = 7, height = 5, dpi = 250)
+```
+
+# TRAIN
+
+```{r}
+sfit_train = survfit(Surv(idle_time_in_hours, event_indicator)~train_200, data=df_surv)
+```
+
+```{r}
+km_train <- ggsurvplot(sfit_train,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest train station",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Train.jpg", plot = print(km_train$plot), width = 7, height = 5, dpi = 250)
+```
+
+# TRAM
+
+```{r}
+sfit_tram = survfit(Surv(idle_time_in_hours, event_indicator)~tram_200, data=df_surv)
+```
+
+```{r}
+km_tram <- ggsurvplot(sfit_tram,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest tram station",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Tram.jpg", plot = print(km_tram$plot), width = 7, height = 5, dpi = 250)
+```
+
+# BUS
+
+```{r}
+sfit_bus = survfit(Surv(idle_time_in_hours, event_indicator)~bus_200, data=df_surv)
+```
+
+```{r}
+km_bus <- ggsurvplot(sfit_bus,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest bus station",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Bus.jpg", plot = print(km_bus$plot), width = 7, height = 5, dpi = 250)
+```
+
+# KINDERGARTEN
+
+```{r}
+sfit_kgarten = survfit(Surv(idle_time_in_hours, event_indicator)~kindergarten_200, data=df_surv)
+```
+
+```{r}
+km_kgarten <- ggsurvplot(sfit_kgarten,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest kindergarten",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Kindergarten.jpg", plot = print(km_kgarten$plot), width = 7, height = 5, dpi = 250)
+```
+
+# PLAYGROUND
+
+```{r}
+sfit_playground = survfit(Surv(idle_time_in_hours, event_indicator)~playground_200, data=df_surv)
+```
+
+```{r}
+km_playground <- ggsurvplot(sfit_playground,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest playground",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Playground.jpg", plot = print(km_playground$plot), width = 7, height =5, dpi = 250)
+```
+
+# SCHOOL
+
+```{r}
+sfit_school = survfit(Surv(idle_time_in_hours, event_indicator)~school_200, data=df_surv)
+```
+
+```{r}
+km_school <- ggsurvplot(sfit_school,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest school",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/School.jpg", plot = print(km_school$plot), width = 7, height = 5, dpi = 250)
+```
+
+# COLLEGE
+
+```{r}
+sfit_college = survfit(Surv(idle_time_in_hours, event_indicator)~college_200, data=df_surv)
+```
+
+```{r}
+km_college <- ggsurvplot(sfit_college,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest college",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/College.jpg", plot = print(km_college$plot), width = 7, height =5, dpi = 250)
+```
+
+# UNIVERSITY
+
+```{r}
+sfit_university = survfit(Surv(idle_time_in_hours, event_indicator)~university_200, data=df_surv)
+```
+
+```{r}
+km_university <- ggsurvplot(sfit_university,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">200m","<=200m"),
+           legend.title="Distance to closest university",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/University.jpg", plot = print(km_university$plot), width = 7, height =5, dpi = 250)
+```
+
+
+#-------------------------------------------------------------------------------
+# 5.0. Kaplan Meier Analysis - Weather
+#-------------------------------------------------------------------------------
+
+```{r}
+sfit_tem = survfit(Surv(idle_time_in_hours, event_indicator)~tem_90, data=df_surv)
+```
+
+```{r}
+km_tem <- ggsurvplot(sfit_tem,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">18.8 ºC","<=18.8 ºC"),
+           legend.title="Temperature",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Temperature.jpg", plot = print(km_tem$plot), width = 7, height = 5, dpi = 250)
+```
+
+```{r}
+sfit_sun = survfit(Surv(idle_time_in_hours, event_indicator)~sun_90, data=df_surv)
+```
+
+```{r}
+km_sun <- ggsurvplot(sfit_sun,
+           #conf.int=TRUE,                                                      # confidence intervals
+           pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">85%","<=85%"),
+           legend.title="Sunshine",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Sunshine.jpg", plot = print(km_sun$plot), width = 7, height = 5, dpi = 250)
+```
+
+```{r}
+sfit_pre = survfit(Surv(idle_time_in_hours, event_indicator)~pre_90, data=df_surv)
+```
+
+```{r}
+km_pre <- ggsurvplot(sfit_pre,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">7.1 mm","<= 7.1 mm"),
+           legend.title="Precipitation",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Precipitation.jpg", plot = print(km_pre$plot), width = 7, height =5, dpi = 250)
+```
+
+```{r}
+sfit_hum = survfit(Surv(idle_time_in_hours, event_indicator)~hum_90, data=df_surv)
+```
+
+```{r}
+km_hum <- ggsurvplot(sfit_hum,
+           #conf.int=TRUE,                                                      # confidence intervals
+           #pval=TRUE,                                                          # p-value (log-rank test)
+           risk.table=FALSE,                                                    #risk table
+           legend.labs=c(">93%","<= 93%"),
+           legend.title="Humidity",  
+           #palette=c("dodgerblue4", "orchid2"), # change colors of the groups
+           #title="Kaplan-Meier Curve for Lung Cancer Survival", # add title to plot
+           ggtheme = theme_classic2(base_size=14, 
+                                    base_family = "Times New Roman"),
+           font.family = "Times New Roman",
+           xlim = c(0,100),
+           ylab = "Survival probability",
+           xlab = "Survival time [h]",
+           break.x.by = 12,
+           #risk.table.height=.2,
+           censor = FALSE,
+           #censor.shape = "|",
+           #censor.size=2,
+           size=0.5, # line width
+           legend = "bottom",
+           surv.median.line = "v")
+
+ggsave("Figures/2_KM-Plots/Humidity.jpg", plot = print(km_hum$plot), width = 7, height =5, dpi = 250)
+```
+

@@ -1,0 +1,506 @@
+
+---
+title: "Data preparation"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+#-------------------------------------------------------------------------------
+# 0. Setup
+#-------------------------------------------------------------------------------
+
+# Import csv file
+```{r}
+library(readr)
+df <- read_csv("Datasets/1_Raw_SQL_Output_LatLong.csv", 
+    col_types = cols(id = col_character()
+                    # , rider_id = col_character()
+        ))
+```
+
+# Fix datetime for "start_timestamp" and "end_timestamp_previous_ride"
+```{r}
+df[['start_timestamp']] <- strptime(df[['start_timestamp']],
+                                 format = "%Y-%m-%d %H:%M:%S")
+
+df[['end_timestamp_previous_ride']] <- strptime(df[['end_timestamp_previous_ride']],
+                                 format = "%Y-%m-%d %H:%M:%S")
+
+# Add one hour to convert UCT to CET
+df$start_timestamp <- df$start_timestamp + (1*60*60)
+df$end_timestamp_previous_ride <- df$end_timestamp_previous_ride + (1*60*60)
+```
+
+#-------------------------------------------------------------------------------
+# 0.1. Extracting zip code
+#-------------------------------------------------------------------------------
+
+# extracting column "end_coordinates" for reverse-geocoding
+```{r}
+df_python <- df[,4]
+```
+
+# breaking data set into smaller pieces to comply with reverse-geocoding API limit
+```{r}
+df_python1 <- df_python[1:1000,]
+df_python2 <- df_python[1001:2000,]
+df_python3 <- df_python[2001:3000,]
+df_python4 <- df_python[3001:4000,]
+df_python5 <- df_python[4001:5000,]
+df_python6 <- df_python[5001:6000,]
+df_python7 <- df_python[6001:7000,]
+df_python8 <- df_python[7001:8000,]
+df_python9 <- df_python[8001:9000,]
+df_python10 <- df_python[9001:10000,]
+df_python11 <- df_python[10001:11000,]
+df_python12 <- df_python[11001:12000,]
+df_python13 <- df_python[12001:13000,]
+df_python14 <- df_python[13001:14000,]
+df_python15 <- df_python[14001:15000,]
+df_python16 <- df_python[15001:16000,]
+df_python17 <- df_python[16001:16998,]
+```
+
+```{r}
+names <- c("df_python1", "df_python2", "df_python3", "df_python4", "df_python5", "df_python6", "df_python7", "df_python8", "df_python9", "df_python10", "df_python11", "df_python12", "df_python13", "df_python14", "df_python15", "df_python16", "df_python17")
+
+for (i in 1:length(names)){
+  write.csv2(get(names[i]),
+             paste0(names[i], ".csv"),
+             row.names = FALSE)
+}
+```
+
+#### Reverse-geocoding with Python ####
+
+```{r}
+# adding extracted zip codes to main dataframe
+df_1 <- read_csv("Datasets/Reverse geocoding/Output_New/1.csv")
+df_2 <- read_csv("Datasets/Reverse geocoding/Output_New/2.csv")
+df_3 <- read_csv("Datasets/Reverse geocoding/Output_New/3.csv")
+df_4 <- read_csv("Datasets/Reverse geocoding/Output_New/4.csv")
+df_5 <- read_csv("Datasets/Reverse geocoding/Output_New/5.csv")
+df_6 <- read_csv("Datasets/Reverse geocoding/Output_New/6.csv")
+df_7 <- read_csv("Datasets/Reverse geocoding/Output_New/7.csv")
+df_8 <- read_csv("Datasets/Reverse geocoding/Output_New/8.csv")
+df_9 <- read_csv("Datasets/Reverse geocoding/Output_New/9.csv")
+df_10 <- read_csv("Datasets/Reverse geocoding/Output_New/10.csv")
+df_11 <- read_csv("Datasets/Reverse geocoding/Output_New/11.csv")
+df_12 <- read_csv("Datasets/Reverse geocoding/Output_New/12.csv")
+df_13 <- read_csv("Datasets/Reverse geocoding/Output_New/13.csv")
+df_14 <- read_csv("Datasets/Reverse geocoding/Output_New/14.csv")
+df_15 <- read_csv("Datasets/Reverse geocoding/Output_New/15.csv")
+df_16 <- read_csv("Datasets/Reverse geocoding/Output_New/16.csv")
+df_17 <- read_csv("Datasets/Reverse geocoding/Output_New/17.csv")
+
+df_zip <- rbind(df_1, df_2, df_3, df_4, df_5, df_6, df_7, df_8, df_9, df_10, df_11, df_12, df_13, df_14, df_15, df_16, df_17)
+
+df$zip_6 <- df_zip$postcode
+print(unique(df$zip_6))
+```
+
+
+# check for wrongly imported zip codes (manual)
+```{r}
+df$zip_check <- "ok"
+for (i in 1:length(df$zip_6)){
+  if (df$zip_6[i] %in% c('olland', '')){
+    df$zip_check[i] <- "check"
+  } 
+  if (substr(df$zip_6[i], 1, 4) %in% c(', 30', ', 25')){
+    df$zip_check[i] <- "check"
+  }
+}
+```
+
+```{r}
+library(dplyr)
+```
+
+# download wrongly imported zip codes as csv 
+```{r}
+wrong_zip <- filter(df, zip_check == "check")
+write.csv(wrong_zip,"Datasets/Reverse geocoding/Check_new/Check_input.csv", row.names = FALSE)
+```
+
+# import fixed zip codes 
+```{r}
+check_fixed <- read_delim("Datasets/Reverse geocoding/Check_new/Check_output.csv", delim = ";", escape_double = FALSE, col_types = cols(id = col_character()), trim_ws = TRUE)
+```
+
+# match fixed zip codes with main dataframe based on check_fixed$id = df$id 
+```{r}
+for (i in 1:length(df$id)){
+  
+  if (df$zip_check[i]=="check"){
+    
+    for (j in 1:length(check_fixed$id)){
+      if (check_fixed$id[j]==df$id[i]){
+        df$zip_6[i] = check_fixed$zip_6_fixed[j]
+      }
+    }
+  
+  }
+}
+```
+
+# add zip_4 column
+```{r}
+df$zip_4 <- substr(df$zip_6, 1, 4)
+print(unique(df$zip_4))
+```
+
+# remove non-Rotterdam zip-code rows
+```{r}
+df <- subset(df, zip_4 %in% 
+            c("3016", "3045", "3014", "3072", "3012", "3035", "3034", "3061", "3011", "3071", "3032", "3036", "3051", "3062", "3031", "3024", "3033", "3015", "3023", "3021", "3039", "3013", "3052", "3054", "3063", "3038", "3037", "3022", "3053", "3055", "3029", "3028", "3082", "3083", "3027", "3026")) 
+```
+
+#-------------------------------------------------------------------------------
+# 0.2. Enrich dataset with Weather data
+#-------------------------------------------------------------------------------
+
+# import weather data
+```{r}
+library(readxl)
+weather_data <- read_excel("External data/weather_data.xlsx", 
+    sheet = "data", col_types = c("text", 
+        "numeric", "numeric", "numeric", 
+        "numeric"))
+```
+
+# turn date into correct format
+```{r}
+weather_data[['date']] <- strptime(weather_data[['date']],
+                                 format = "%Y-%m-%d")
+
+df$date <- substr(df$end_timestamp_previous_ride, 1, 10)
+df[['date']] <- strptime(df[['date']],
+                                 format = "%Y-%m-%d")
+```
+
+# match weather data with main dataframe based on weather_data$date = df$date
+```{r}
+df <- left_join(df, weather_data, by = "date")
+```
+
+# precipitation from -0.1 to 0.025 (download issue)
+```{r}
+for (x in 1:length(df$id)){
+  if (df$precipitation[x] < 0){
+    df$precipitation[x] <- 0.025
+  }
+}
+```
+
+
+#-------------------------------------------------------------------------------
+# 0.3. Enrich dataset with Google maps data
+#-------------------------------------------------------------------------------
+
+```{r}
+#install.packages("geosphere")
+```
+
+```{r}
+library("geosphere")
+```
+
+```{r}
+loc_university <- read_excel("External data/open_street_maps.xlsx", sheet = "university")
+loc_school <- read_excel("External data/open_street_maps.xlsx", sheet = "school")
+loc_kindergarten <- read_excel("External data/open_street_maps.xlsx", sheet = "kindergarten")
+loc_college <- read_excel("External data/open_street_maps.xlsx", sheet = "college")
+loc_tram <- read_excel("External data/open_street_maps.xlsx", sheet = "tram")
+loc_bus <- read_excel("External data/open_street_maps.xlsx", sheet = "bus")
+loc_metro <- read_excel("External data/open_street_maps.xlsx", sheet = "metro")
+loc_playground <- read_excel("External data/open_street_maps.xlsx", sheet = "playground")
+loc_train <- read_excel("External data/open_street_maps.xlsx", sheet = "train")
+```
+
+```{r}
+df$university <- NA
+df$school <- NA
+df$kindergarten <- NA
+df$playground <- NA
+df$college <- NA
+df$tram <- NA
+df$bus <- NA
+df$metro <- NA
+df$train <- NA
+```
+
+# university
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_university$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_university$longitude[j],loc_university$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$university[i] <- distance
+distance = 1000000
+}
+```
+
+# school
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_school$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_school$longitude[j],loc_school$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$school[i] <- distance
+distance = 1000000
+}
+```
+
+# kindergarten
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_kindergarten$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_kindergarten$longitude[j],loc_kindergarten$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$kindergarten[i] <- distance
+distance = 1000000
+}
+```
+
+# college
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_college$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_college$longitude[j],loc_college$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$college[i] <- distance
+distance = 1000000
+}
+```
+
+# tram
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_tram$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_tram$longitude[j],loc_tram$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$tram[i] <- distance
+distance = 1000000
+}
+```
+
+# bus
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_bus$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_bus$longitude[j],loc_bus$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$bus[i] <- distance
+distance = 1000000
+}
+```
+
+# metro
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_metro$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_metro$longitude[j],loc_metro$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$metro[i] <- distance
+distance = 1000000
+}
+```
+
+# playground
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_playground$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_playground$longitude[j],loc_playground$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$playground[i] <- distance
+distance = 1000000
+}
+```
+
+# train
+```{r}
+distance = 1000000
+
+for (i in 1:length(df$id)){
+    for (j in 1:length(loc_train$type)){
+        temp = distm(c(df$start_longitude[i], df$start_latitude[i]), c(loc_train$longitude[j],loc_train$latitude[j]))
+            if (temp<distance){
+               distance = temp
+            }
+        temp = 0
+    }
+df$train[i] <- distance
+distance = 1000000
+}
+```
+
+#-------------------------------------------------------------------------------
+# 0.4. Enrich dataset with temporal data
+#-------------------------------------------------------------------------------
+
+```{r}
+library(lubridate)
+```
+
+```{r}
+df$hour <- hour(df$end_timestamp_previous_ride)
+df$day <- wday(df$end_timestamp_previous_ride)
+df$month <- month(df$end_timestamp_previous_ride)
+```
+
+# Sun = 1, Mon = 2, Tue = 3, Wed = 4, Thu = 5, Fri = 6, Sat = 7
+
+#-------------------------------------------------------------------------------
+# 0.5. Final touches 
+#-------------------------------------------------------------------------------
+
+# remove irrelevant support columns (test & zip_check)
+```{r}
+df_output <- subset(df, select=-c(date,zip_check))
+```
+
+# Save final dataframe as csv
+```{r}
+write.csv(df_output,"Datasets/2_V1_unprocessed.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#------------------------
+# TRASH
+#------------------------
+
+
+
+#-------------------------------------------------------------------------------
+# 0.2. Enrich dataset with CBI data
+#-------------------------------------------------------------------------------
+
+
+# import cleaned CBS data
+```{r}
+library(readxl)
+cbs <- read_excel("External data/Cleaned.xlsx", 
+    col_types = c("text", "text", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric"))
+```
+
+# match DBS data with main dataframe based on cbs$zip_4 = df$zip_4
+```{r}
+df$pop_total <- NA
+df$pop_female <- NA
+df$pop_15_y <- NA
+df$pop_15_25 <- NA
+df$pop_25_45 <- NA
+df$pop_45_65 <- NA
+df$pop_nl <- NA
+df$pop_wib <- NA
+df$pop_nwib <- NA
+df$pop_social_security <- NA
+df$pop_density_ratio <- NA
+df$hh_total <- NA
+df$hh_one_wo_kids <- NA
+df$hh_multiple_wo_kids <- NA
+df$hh_one_w_kids <- NA
+df$hh_multiple_w_kids <- NA
+df$hh_size <- NA
+df$woz <- NA
+```
+
+```{r}
+for (i in 1:length(df$zip_4)){
+    for (j in 1:length(cbs$zip_4)){
+      if (cbs$zip_4[j]==df$zip_4[i]){
+        df$pop_total[i] <- cbs$pop_total[j]
+        df$pop_female[i] <- cbs$pop_female[j]
+        df$pop_15_y[i] <- cbs$pop_15_y[j]
+        df$pop_15_25[i] <- cbs$pop_15_25[j]
+        df$pop_25_45[i] <- cbs$pop_25_45[j]
+        df$pop_45_65[i] <- cbs$pop_45_65[j]
+        df$pop_nl[i] <- cbs$pop_nl[j]
+        df$pop_wib[i] <- cbs$pop_wib[j]
+        df$pop_nwib[i] <- cbs$pop_nwib[j]
+        df$pop_social_security[i] <- cbs$pop_social_security[j]
+        df$pop_density_ratio[i] <- cbs$pop_density_ratio[j]
+        df$hh_total[i] <- cbs$hh_total[j]
+        df$hh_one_wo_kids[i] <- cbs$hh_one_wo_kids[j]
+        df$hh_multiple_wo_kids[i] <- cbs$hh_multiple_wo_kids[j]
+        df$hh_one_w_kids[i] <- cbs$hh_one_w_kids[j]
+        df$hh_multiple_w_kids[i] <- cbs$hh_multiple_w_kids[j]
+        df$hh_size[i] <- cbs$hh_size[j]
+        df$woz[i] <- cbs$woz[j]
+      }
+    }
+}
+```
+

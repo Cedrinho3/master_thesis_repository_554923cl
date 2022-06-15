@@ -1,0 +1,160 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+#-------------------------------------------------------------------------------
+# 1.0. Data import
+#-------------------------------------------------------------------------------
+
+```{r}
+library(readr)
+df <- read_csv("Datasets/2_V1_unprocessed.csv", 
+    col_types = cols(id = col_character(), 
+        end_timestamp_previous_ride = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        start_timestamp = col_datetime(format = "%Y-%m-%d %H:%M:%S"), 
+        zip_4 = col_double()))
+```
+
+# adding categorical distance variables
+```{r}
+df$university_200 <- NA
+df$school_200 <- NA
+df$kindergarten_200 <- NA
+df$college_200 <- NA
+df$tram_200 <- NA
+df$bus_200 <- NA
+df$metro_200 <- NA
+df$playground_200 <- NA
+df$train_200 <- NA
+
+for (i in 1:length(df$id)){
+  if (df$university[i]<=200){
+    df$university_200[i] <- 1
+  } else {
+    df$university_200[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$school[i]<=200){
+    df$school_200[i] <- 1
+  } else {
+    df$school_200[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$kindergarten[i]<=200){
+    df$kindergarten_200[i] <- 1
+  } else {
+    df$kindergarten_200[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$college[i]<=200){
+    df$college_200[i] <- 1
+  } else {
+    df$college_200[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$tram[i]<=200){
+    df$tram_200[i] <- 1
+  } else {
+    df$tram_200[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$bus[i]<=200){
+    df$bus_200[i] <- 1
+  } else {
+    df$bus_200[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$metro[i]<=200){
+    df$metro_200[i] <- 1
+  } else {
+    df$metro_200[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$playground[i]<=200){
+    df$playground_200[i] <- 1
+  } else {
+    df$playground_200[i] <- 0
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$train[i]<=200){
+    df$train_200[i] <- 1
+  } else {
+    df$train_200[i] <- 0
+  }
+}
+```
+
+# adding binary dependent variables for two-step approach
+```{r}
+df$layer_1h <- NA
+df$layer_12h <- NA
+df$layer_24h <- NA
+df$layer_48h <- NA
+df$layer_96h <- NA
+
+for (i in 1:length(df$id)){
+  if (df$idle_time_in_hours[i]<=1){
+    df$layer_1h[i] <- 0
+  } else {
+    df$layer_1h[i] <- 1
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$idle_time_in_hours[i]<=12){
+    df$layer_12h[i] <- 0
+  } else {
+    df$layer_12h[i] <- 1
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$idle_time_in_hours[i]<=24){
+    df$layer_24h[i] <- 0
+  } else {
+    df$layer_24h[i] <- 1
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$idle_time_in_hours[i]<=48){
+    df$layer_48h[i] <- 0
+  } else {
+    df$layer_48h[i] <- 1
+  }
+}
+
+for (i in 1:length(df$id)){
+  if (df$idle_time_in_hours[i]<=96){
+    df$layer_96h[i] <- 0
+  } else {
+    df$layer_96h[i] <- 1
+  }
+}
+
+```
+
+# save final dataframe
+```{r}
+write.csv(df,"Datasets/3_V1_processed.csv", row.names = FALSE)
+```
+
+
